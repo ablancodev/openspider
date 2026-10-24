@@ -4,6 +4,16 @@
 
 Está hecho con HTML, CSS y JavaScript sin dependencias, más un pequeño proxy en PHP para poder descargar páginas de cualquier dominio.
 
+![OpenSpider analizando ablancodev.com](docs/media/openspider-demo.gif)
+
+## Capturas
+
+| Rastreo | Incidencias priorizadas |
+|---|---|
+| ![Rastreo completado con el resumen del sitio](docs/media/rastreo.jpg) | ![Panel de incidencias con descripción y cómo solucionarlo](docs/media/incidencias.jpg) |
+| **Vista previa del snippet en Google** | **Árbol web** |
+| ![Vista previa SERP con el título truncado en píxeles](docs/media/serp-snippet.jpg) | ![Árbol web interactivo coloreado por código de estado](docs/media/arbol-web.jpg) |
+
 ## Características
 
 - **Modo Spider**: rastrea un sitio completo desde una URL de inicio siguiendo enlaces, respetando `robots.txt`.
