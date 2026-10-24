@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenSpider SEO</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2367b346'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'%3ES%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+<nav class="menubar" id="menubar"></nav>
+
+<div class="toolbar">
+  <div class="logo"><span class="logo-dot">S</span> OpenSpider <small>SEO</small></div>
+  <span class="mode-badge" id="modeBadge">Spider</span>
+  <input id="startUrl" type="text" placeholder="Introduce la URL a rastrear (p. ej. https://www.ejemplo.com/)" autocomplete="off" spellcheck="false">
+  <button id="btnList" class="btn" hidden>Subir lista ▾</button>
+  <button id="btnStart" class="btn primary">Start</button>
+  <button id="btnPause" class="btn" disabled>Pause</button>
+  <button id="btnClear" class="btn">Clear</button>
+  <button id="btnTree" class="btn" title="Árbol web">🌳 Árbol web</button>
+  <div class="progress"><div class="progress-bar" id="progressBar"></div><span id="progressText">0%</span></div>
+</div>
+
+<main class="main">
+  <section class="left" id="left">
+    <div class="tabs" id="tabs"></div>
+    <div class="filterbar">
+      <select id="filterSel" title="Filtro"></select>
+      <button class="btn small" id="btnExport">⇩ Export</button>
+      <span class="spacer"></span>
+      <span class="count" id="rowCount"></span>
+      <input id="search" type="search" placeholder="Buscar (regex)…" spellcheck="false">
+    </div>
+    <div class="gridwrap" id="grid"></div>
+    <div class="splitter h" id="splitH"></div>
+    <div class="bottom" id="bottom">
+      <div class="btabs" id="btabs"></div>
+      <div class="bcontent" id="bcontent"><div class="placeholder">Selecciona una URL para ver los detalles</div></div>
+    </div>
+  </section>
+  <div class="splitter v" id="splitV"></div>
+  <aside class="right" id="right">
+    <div class="rtabs" id="rtabs"></div>
+    <div class="rcontent" id="rcontent"></div>
+  </aside>
+</main>
+
+<footer class="statusbar">
+  <span id="sbMode">Modo: Spider</span>
+  <span id="sbRate">Media: 0 URL/s · Actual: 0 URL/s</span>
+  <span class="spacer"></span>
+  <span id="sbDone">Completado 0 de 0 (0%) · Pendientes 0</span>
+</footer>
+
+<div class="modal-bg" id="modalBg" hidden><div class="modal" id="modal"></div></div>
+<div class="ctxmenu" id="ctxmenu" hidden></div>
+<input type="file" id="fileOpen" accept=".json,.ospider" hidden>
+<input type="file" id="fileList" accept=".txt,.csv" hidden>
+
+<script src="assets/js/util.js"></script>
+<script src="assets/js/robots.js"></script>
+<script src="assets/js/parser.js"></script>
+<script src="assets/js/crawler.js"></script>
+<script src="assets/js/analysis.js"></script>
+<script src="assets/js/tabs.js"></script>
+<script src="assets/js/grid.js"></script>
+<script src="assets/js/viz.js"></script>
+<script src="assets/js/tree.js"></script>
+<script src="assets/js/reports.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Editores / herramientas
+.idea/
+.vscode/
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.mcp.json
+
+# Credenciales y configuración local
+.env
+.env.*
+*.pem
+*.key
+config.local.php
+
+# Rastreos guardados y exportaciones
+*.ospider.json
+*.csv
+*.svg
+sitemap*.xml
