@@ -82,7 +82,14 @@ Atajos: `⌘/Ctrl + S` guardar rastreo · `⌘/Ctrl + O` abrir · `↑ / ↓` na
 
 ## Seguridad
 
-`api.php` es un proxy HTTP: por defecto **solo acepta peticiones desde `localhost`**. No lo publiques en un servidor accesible desde Internet; si lo haces, protégelo con autenticación y entiende los riesgos (SSRF).
+`api.php` es un proxy HTTP. Desde `localhost` funciona sin restricciones. Desde fuera, por defecto funciona en **modo demo** (`$remoteMode = 'demo'`), pensado para publicarlo en Internet:
+
+- Solo descarga URLs de hosts con IP pública (bloquea `localhost`, redes privadas, link-local/metadatos, etc.) y fija la IP validada para evitar *DNS rebinding*.
+- Solo puertos 80 y 443, solo `http`/`https`, sin credenciales en la URL.
+- Verifica los certificados SSL, limita el tamaño (5 MB) y el timeout (20 s).
+- Máximo de peticiones por minuto e IP (`$demoRateMin`); el rastreador espera y reintenta si se alcanza.
+
+Pon `$remoteMode = 'off'` para aceptar solo `localhost`. `'open'` quita todas las restricciones (proxy abierto, no lo uses en un servidor público).
 
 Rastrea solo sitios que tengas permiso para analizar y usa velocidades razonables para no sobrecargar servidores ajenos.
 

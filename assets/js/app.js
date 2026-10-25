@@ -35,8 +35,9 @@ const App = {
       if (c.cfg.autoAnalysis && c.urls.length) this.crawlAnalysis(true);
       else this.refresh(true);
     });
-    fetch('api.php?action=ping').then(r => r.json()).then(j => { if (!j.ok) throw 0; }).catch(() =>
-      U.toast('⚠️ No se puede contactar con api.php. Sirve la app desde un servidor con PHP + cURL (p. ej. http://localhost/openspider/).', 8000));
+    fetch('api.php?action=ping').then(r => r.json()).then(j => { if (!j.ok) throw { api: j.error }; }).catch(e =>
+      U.toast(e && e.api ? '⚠️ api.php: ' + e.api
+        : '⚠️ No se puede contactar con api.php. Sirve la app desde un servidor con PHP + cURL (p. ej. http://localhost/openspider/).', 8000));
   },
 
   throttle(fn, ms) {

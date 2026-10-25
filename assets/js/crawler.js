@@ -234,14 +234,19 @@ class Crawler extends EventTarget {
   /* ---------- Red ---------- */
   async fetchRaw(url, body = 'html', method = 'GET') {
     const headers = this.cfg.extraHeaders.split('\n').map(s => s.trim()).filter(s => s.includes(':'));
-    const res = await fetch('api.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'fetch', url, body, method, ua: this.cfg.userAgent, timeout: this.cfg.timeout, headers,
-        auth: this.cfg.authUser ? this.cfg.authUser + ':' + this.cfg.authPass : '',
-      }),
+    const payload = JSON.stringify({
+      action: 'fetch', url, body, method, ua: this.cfg.userAgent, timeout: this.cfg.timeout, headers,
+      auth: this.cfg.authUser ? this.cfg.authUser + ':' + this.cfg.authPass : '',
     });
+    let res;
+    for (let tries = 0; ; tries++) {
+      res = await fetch('api.php', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
+      if (res.status !== 429 || tries >= 5) break;
+      // límite de peticiones del modo demo: espera y reintenta
+      const wait = Math.max(1, parseInt(res.headers.get('Retry-After'), 10) || 10);
+      this.emit('log', `Límite de peticiones del servidor, reintentando en ${wait} s`);
+      await new Promise(r => setTimeout(r, wait * 1000));
+    }
     if (!res.ok) throw new Error('Proxy HTTP ' + res.status);
     return res.json();
   }

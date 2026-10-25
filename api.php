@@ -5,21 +5,29 @@
  * script hace la petición HTTP con cURL y devuelve estado, cabeceras, tiempos y cuerpo.
  * Todo el parseo SEO se hace en el navegador.
  *
- * Seguridad: por defecto solo acepta peticiones desde localhost (es un proxy abierto).
+ * Seguridad: es un proxy, así que desde fuera de localhost funciona en modo "demo"
+ * (ver $remoteMode): solo IPs públicas, puertos 80/443, límites de tamaño y tiempo
+ * y un máximo de peticiones por minuto por IP.
  */
 
 ini_set('serialize_precision', '-1');
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 
-$allowRemote = false; // pon a true bajo tu responsabilidad
-$remote = $_SERVER['REMOTE_ADDR'] ?? '';
-if (!$allowRemote && !in_array($remote, ['127.0.0.1', '::1', 'localhost'], true)) {
-    http_response_code(403);
-    echo json_encode(['ok' => false, 'error' => 'Solo se permite el acceso desde localhost']);
-    exit;
-}
+// 'off'  = solo localhost
+// 'demo' = acceso remoto con restricciones anti-SSRF y límite de peticiones
+// 'open' = acceso remoto sin restricciones (proxy abierto, no lo uses en Internet)
+$remoteMode   = 'demo';
+$demoRateMin  = 240;               // peticiones por minuto e IP en modo demo
+$demoMaxBytes = 5 * 1024 * 1024;   // tamaño máximo de cuerpo en modo demo
+$demoTimeout  = 20;                // segundos máximos en modo demo
 
+$remote = $_SERVER['REMOTE_ADDR'] ?? '';
+$isLocal = in_array($remote, ['127.0.0.1', '::1'], true);
+$demo = !$isLocal && $remoteMode === 'demo';
+if (!$isLocal && $remoteMode !== 'demo' && $remoteMode !== 'open') {
+    fail(403, 'Solo se permite el acceso desde localhost');
+}
 $in = json_decode(file_get_contents('php://input') ?: '[]', true) ?: [];
 $in = array_merge($_GET, $in);
 $action = $in['action'] ?? 'fetch';
@@ -33,6 +41,7 @@ if ($action !== 'fetch') {
     echo json_encode(['ok' => false, 'error' => 'Acción desconocida']);
     exit;
 }
+if ($demo) rateLimit($remote, $demoRateMin);
 
 $url = trim($in['url'] ?? '');
 if (!preg_match('#^https?://#i', $url)) {
@@ -49,6 +58,18 @@ $wantBody  = !empty($bodyMode);
 $maxBytes  = (int)($in['maxBytes'] ?? 15 * 1024 * 1024);
 $extraHdrs = is_array($in['headers'] ?? null) ? $in['headers'] : [];
 $auth      = $in['auth'] ?? '';             // "usuario:clave" para HTTP Basic
+
+$pin = null; // "host:puerto:ip" para CURLOPT_RESOLVE
+if ($demo) {
+    $timeout  = min($timeout, $demoTimeout);
+    $maxBytes = max(1, min($maxBytes, $demoMaxBytes));
+    $chk = checkPublicUrl($url);
+    if (isset($chk['error'])) {
+        echo json_encode(['ok' => false, 'url' => $url, 'status' => 0, 'error' => $chk['error']]);
+        exit;
+    }
+    $pin = $chk['pin'];
+}
 
 $respHeaders = [];
 $rawHeaderLines = [];
@@ -70,8 +91,8 @@ $okOpts = curl_setopt_array($ch, [
     CURLOPT_CONNECTTIMEOUT => min(15, $timeout),
     CURLOPT_TIMEOUT        => $timeout,
     CURLOPT_ENCODING       => '',      // acepta gzip/deflate/br
-    CURLOPT_SSL_VERIFYPEER => false,
-    CURLOPT_SSL_VERIFYHOST => 0,
+    CURLOPT_SSL_VERIFYPEER => $demo,
+    CURLOPT_SSL_VERIFYHOST => $demo ? 2 : 0,
     CURLOPT_HTTPHEADER     => $reqHeaders,
     CURLOPT_NOBODY         => $method === 'HEAD',
     CURLOPT_HEADERFUNCTION => function ($ch, $line) use (&$respHeaders, &$rawHeaderLines, &$statusLine) {
@@ -116,6 +137,13 @@ if (!$okOpts) {
 }
 // opciones que pueden no estar soportadas por la build de cURL: se fijan aparte
 if (defined('CURL_HTTP_VERSION_2TLS')) @curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2TLS);
+if ($pin) {
+    // fija la IP ya validada para evitar DNS rebinding
+    curl_setopt($ch, CURLOPT_RESOLVE, [$pin]);
+    curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+    if (defined('CURLOPT_PROTOCOLS_STR')) curl_setopt($ch, CURLOPT_PROTOCOLS_STR, 'http,https');
+    else curl_setopt($ch, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+}
 if ($auth !== '') {
     curl_setopt($ch, CURLOPT_USERPWD, $auth);
 }
@@ -179,6 +207,71 @@ echo json_encode([
     'truncated'    => $truncated,
     'body'         => $wantBody ? $body : null,
 ], JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+function fail(int $code, string $msg): void
+{
+    http_response_code($code);
+    echo json_encode(['ok' => false, 'error' => $msg]);
+    exit;
+}
+
+/** Límite de peticiones por IP en ventanas de 60 s (fichero por IP en el directorio temporal). */
+function rateLimit(string $ip, int $max): void
+{
+    $dir = sys_get_temp_dir() . '/ospider-rl';
+    if (!is_dir($dir)) @mkdir($dir, 0700, true);
+    $fh = @fopen($dir . '/' . md5($ip), 'c+');
+    if (!$fh) return;
+    flock($fh, LOCK_EX);
+    $win = intdiv(time(), 60);
+    [$w, $n] = array_map('intval', explode(' ', trim(stream_get_contents($fh)) ?: '0 0') + [0, 0]);
+    if ($w !== $win) $n = 0;
+    $n++;
+    ftruncate($fh, 0);
+    rewind($fh);
+    fwrite($fh, "$win $n");
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    if ($n > $max) {
+        header('Retry-After: ' . (60 - time() % 60));
+        fail(429, 'Demasiadas peticiones, espera un momento');
+    }
+}
+
+function isPublicIp(string $ip): bool
+{
+    $flags = FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
+    if (defined('FILTER_FLAG_GLOBAL_RANGE')) $flags |= FILTER_FLAG_GLOBAL_RANGE;
+    return filter_var($ip, FILTER_VALIDATE_IP, $flags) !== false;
+}
+
+/**
+ * Modo demo: la URL debe apuntar a un host público en el puerto 80/443.
+ * Devuelve ['pin' => "host:puerto:ip"] para fijar la resolución o ['error' => mensaje].
+ */
+function checkPublicUrl(string $url): array
+{
+    if (preg_match('#[\s\\\\\x00-\x1f\x7f]#', $url)) return ['error' => 'URL no válida'];
+    $p = parse_url($url);
+    if (!$p || empty($p['host'])) return ['error' => 'URL no válida'];
+    if (isset($p['user']) || isset($p['pass'])) return ['error' => 'URL con credenciales no permitida (usa la autenticación de la configuración)'];
+    $scheme = strtolower($p['scheme']);
+    $port = $p['port'] ?? ($scheme === 'https' ? 443 : 80);
+    if (!in_array($port, [80, 443], true)) return ['error' => 'En la demo solo se permiten los puertos 80 y 443'];
+    $host = strtolower($p['host']);
+    if (preg_match('/^\d{1,3}(\.\d{1,3}){3}$/', $host)) {
+        $ip = $host;
+    } elseif (preg_match('/^([a-z0-9_]([a-z0-9_-]*[a-z0-9_])?\.)+[a-z]([a-z0-9-]*[a-z0-9])?$/', $host) && strlen($host) <= 253) {
+        $ips = gethostbynamel($host);
+        if (!$ips) return ['error' => 'No se pudo resolver el dominio'];
+        foreach ($ips as $i) if (!isPublicIp($i)) return ['error' => 'En la demo no se permiten direcciones internas'];
+        $ip = $ips[0];
+    } else {
+        return ['error' => 'En la demo solo se permiten dominios públicos o IPv4'];
+    }
+    if (!isPublicIp($ip)) return ['error' => 'En la demo no se permiten direcciones internas'];
+    return ['pin' => "$host:$port:$ip"];
+}
 
 function resolveUrl(string $base, string $rel): string
 {
