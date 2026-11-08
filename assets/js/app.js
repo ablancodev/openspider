@@ -1,12 +1,21 @@
-/* Aplicación: une crawler, pestañas, tabla, paneles y menús */
+/* Aplicación: une crawler, navegación, tabla, paneles y acciones */
+
+/* Agrupación de las pestañas en la barra lateral (las que no aparezcan van al último grupo) */
+const NAV_GROUPS = [
+  ['Rastreo', ['internal', 'external', 'response', 'url', 'security']],
+  ['Contenido', ['titles', 'desc', 'kw', 'h1', 'h2', 'content', 'images']],
+  ['Indexación', ['canonicals', 'directives', 'pagination', 'hreflang', 'sitemaps']],
+  ['Enlaces y schema', ['links', 'structured']],
+  ['Personalizado', []],
+];
+
 const App = {
   crawler: new Crawler(),
-  tabIdx: 0, filterIdx: 0, search: '', btab: 'details', rtab: 'overview',
-  selected: null, overviewOpen: new Set(['Internal', 'Response Codes']), issueOpen: null,
+  tabIdx: 0, filterIdx: 0, search: '', btab: 'details', rtab: 'issues',
+  selected: null, issueOpen: null,
 
   init() {
     try { const s = localStorage.getItem('ospider.cfg'); if (s) Object.assign(this.crawler.cfg, JSON.parse(s)); } catch {}
-    try { const t = localStorage.getItem('ospider.theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
     this.crawler.cfg.mode = 'spider';
     this.grid = new Grid(U.$('#grid'), {
       crawler: this.crawler, statusColor: this.statusColor,
@@ -14,22 +23,22 @@ const App = {
       onOpen: r => window.open(r.url, '_blank', 'noopener'),
       onContext: (r, e) => this.contextMenu(r, e),
     });
-    this.buildMenus();
+    this.buildActions();
     this.bindToolbar();
     this.bindSplitters();
-    this.renderTabs();
     this.renderBottomTabs();
     this.renderRightTabs();
+    this.updateButtons();
     this.refresh(true);
 
     const c = this.crawler;
     const throttled = this.throttle(() => this.refresh(), 700);
     c.addEventListener('progress', throttled);
     c.addEventListener('start', () => { this.updateButtons(); this.refresh(true); });
-    c.addEventListener('pause', () => this.updateButtons());
+    c.addEventListener('pause', () => { this.updateButtons(); this.renderStatus(); });
     c.addEventListener('resume', () => this.updateButtons());
     c.addEventListener('reset', () => { this.selected = null; });
-    c.addEventListener('loaded', () => { this.renderTabs(); this.updateButtons(); this.refresh(true); this.renderBottom(); });
+    c.addEventListener('loaded', () => { this.updateButtons(); this.refresh(true); this.renderBottom(); });
     c.addEventListener('done', () => {
       this.updateButtons();
       if (c.cfg.autoAnalysis && c.urls.length) this.crawlAnalysis(true);
@@ -58,25 +67,33 @@ const App = {
   get tabs() { return allTabs(this.crawler.cfg); },
   get tab() { return this.tabs[this.tabIdx] || this.tabs[0]; },
 
-  /* ---------- Toolbar ---------- */
+  /* ---------- Barra superior ---------- */
   bindToolbar() {
     const c = this.crawler;
+    U.$('#btnClear').append(U.icon('trash'));
+    U.$('#btnNav').append(U.icon('menu'));
+    U.$('#searchIcon').append(U.icon('search'));
+    U.$('#btnExport').prepend(U.icon('download'));
+    U.$('#btnStart').prepend(U.icon('play'));
     U.$('#btnStart').onclick = () => this.start();
     U.$('#startUrl').addEventListener('keydown', e => { if (e.key === 'Enter') this.start(); });
     U.$('#btnPause').onclick = () => { if (c.paused) c.resume(); else c.pause(); };
     U.$('#btnClear').onclick = () => { if (c.running && !c.paused) return U.toast('Pausa el rastreo antes de limpiar'); if (c.urls.length && !confirm('¿Borrar los datos del rastreo actual?')) return; c.reset(); this.refresh(true); this.renderBottom(); this.updateButtons(); };
-    U.$('#btnTree').onclick = () => WebTree.open('crawl');
     U.$('#btnList').onclick = () => this.listDialog();
-    U.$('#btnExport').onclick = () => this.grid.exportCSV(`${this.tab.id}-${this.tab.filters[this.filterIdx].name.replace(/\W+/g, '_').toLowerCase()}-${Reports.stamp()}.csv`);
-    U.$('#filterSel').onchange = e => { this.filterIdx = +e.target.value; this.refresh(true); };
+    U.$$('#modeSeg button').forEach(b => b.onclick = () => this.setMode(b.dataset.mode));
+    U.$('#btnExport').onclick = () => this.exportView();
     U.$('#search').addEventListener('input', U.debounce(e => { this.search = e.target.value; this.refresh(true); }, 250));
     U.$('#fileOpen').onchange = e => this.openFile(e.target.files[0]);
     U.$('#fileList').onchange = async e => { const f = e.target.files[0]; if (f) { this.listText = await f.text(); this.listDialog(); } };
+    U.$('#btnNav').onclick = () => document.body.classList.toggle('nav-open');
+    U.$('#scrim').onclick = () => document.body.classList.remove('nav-open');
     document.addEventListener('keydown', e => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); this.saveFile(); }
       if ((e.metaKey || e.ctrlKey) && e.key === 'o') { e.preventDefault(); U.$('#fileOpen').click(); }
+      if (e.key === 'Escape') document.body.classList.remove('nav-open');
     });
     document.addEventListener('click', () => { U.$('#ctxmenu').hidden = true; U.$$('.menu.open').forEach(m => m.classList.remove('open')); });
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => this.renderThemeIcon());
   },
 
   async start() {
@@ -88,7 +105,7 @@ const App = {
         await c.start(this.listText);
       } else {
         const v = U.$('#startUrl').value.trim();
-        if (!v) return U.toast('Introduce una URL');
+        if (!v) { U.$('#startUrl').focus(); return U.toast('Introduce una URL'); }
         if (c.urls.length && !confirm('Se borrará el rastreo actual. ¿Continuar?')) return;
         await c.start(v);
       }
@@ -99,142 +116,156 @@ const App = {
   updateButtons() {
     const c = this.crawler;
     const crawling = c.running && !c.paused;
+    const resumable = c.paused && c.qHead < c.queue.length;
     U.$('#btnStart').disabled = crawling;
-    U.$('#btnPause').disabled = !(crawling || (c.paused && c.qHead < c.queue.length));
-    U.$('#btnPause').textContent = c.paused && c.qHead < c.queue.length ? 'Resume' : 'Pause';
+    U.$('#btnPause').disabled = !(crawling || resumable);
+    U.$('#btnPause').textContent = resumable ? 'Reanudar' : 'Pausar';
     const list = c.cfg.mode === 'list';
-    U.$('#modeBadge').textContent = list ? 'List' : 'Spider';
-    U.$('#sbMode').textContent = 'Modo: ' + (list ? 'List' : 'Spider');
+    U.$$('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === c.cfg.mode));
     U.$('#startUrl').hidden = list;
     U.$('#btnList').hidden = !list;
+    const n = (this.listText || '').split(/\s+/).filter(Boolean).length;
+    U.$('#btnList').textContent = n ? `${n} URLs en la lista · editar` : 'Pegar o subir lista de URLs…';
     if (c.startUrl && !list && !U.$('#startUrl').value) U.$('#startUrl').value = c.startUrl;
+    this.renderStatus();
   },
 
   listDialog() {
     const ta = U.el('textarea', { style: 'width:100%;height:340px', spellcheck: 'false', placeholder: 'https://www.ejemplo.com/\nhttps://www.ejemplo.com/pagina-1\n…' });
     ta.value = this.listText || '';
-    const body = U.el('div', { class: 'cfg-pane form' }, U.el('div', { class: 'hint' }, 'Pega una URL por línea (o sube un .txt/.csv). En modo lista solo se rastrean estas URLs (profundidad 0) y sus recursos/redirecciones.'), ta);
-    Modal.open('Modo lista — URLs', body, [
+    const body = U.el('div', { class: 'cfg-pane form' }, U.el('div', { class: 'hint' }, 'Pega una URL por línea (o sube un .txt/.csv). En modo lista solo se rastrean estas URLs (profundidad 0) y sus recursos y redirecciones.'), ta);
+    Modal.open('Lista de URLs', body, [
       { label: 'Desde archivo…', onclick: () => { Modal.close(); U.$('#fileList').click(); } },
       { label: 'Cancelar', onclick: () => Modal.close() },
-      { label: 'OK — Rastrear', cls: 'primary', onclick: () => { this.listText = ta.value; Modal.close(); this.crawler.cfg.mode = 'list'; this.start(); } },
+      { label: 'Rastrear lista', cls: 'primary', onclick: () => { this.listText = ta.value; Modal.close(); this.crawler.cfg.mode = 'list'; this.start(); } },
     ]);
+    setTimeout(() => ta.focus());
   },
 
   setMode(mode) {
     const c = this.crawler;
+    if (c.cfg.mode === mode) return;
     if (c.running && !c.paused) return U.toast('Pausa el rastreo antes de cambiar de modo');
     c.cfg.mode = mode;
     this.updateButtons();
-    this.buildMenus();
-    if (mode === 'list') this.listDialog();
+    if (mode === 'list' && !this.listText) this.listDialog();
   },
 
-  /* ---------- Menús ---------- */
-  buildMenus() {
-    const c = this.crawler, mode = c.cfg.mode;
-    const menus = [
-      ['File', [
-        ['Nuevo rastreo', () => U.$('#btnClear').click()],
-        ['Abrir rastreo…', () => U.$('#fileOpen').click(), '⌘O'],
-        ['Guardar rastreo', () => this.saveFile(), '⌘S'],
-        '-',
-        ['Exportar pestaña actual (CSV)', () => U.$('#btnExport').click()],
-        ['Exportar todos los datos internos (CSV)', () => this.exportAllInternal()],
-        '-',
-        ['Tema claro / oscuro', () => this.toggleTheme()],
-      ]],
-      ['Mode', [
-        [(mode === 'spider' ? '✓ ' : '   ') + 'Spider', () => this.setMode('spider')],
-        [(mode === 'list' ? '✓ ' : '   ') + 'List', () => this.setMode('list')],
-      ]],
-      ['Configuration', CONFIG_SECTIONS.map((s, i) => [s.name, () => openConfig(c, i, () => this.onConfigSaved())])],
-      ['Bulk Export', [
-        ['All Inlinks', () => Reports.bulk('allInlinks')],
-        ['All Outlinks', () => Reports.bulk('allOutlinks')],
-        ['All Anchor Text', () => Reports.bulk('allAnchors')],
-        ['All Images', () => Reports.bulk('allImages')],
-        '-',
-        ['Response Codes › Redirection (3xx) Inlinks', () => Reports.bulk('r3xx')],
-        ['Response Codes › Client Error (4xx) Inlinks', () => Reports.bulk('r4xx')],
-        ['Response Codes › Server Error (5xx) Inlinks', () => Reports.bulk('r5xx')],
-        ['Response Codes › No Response Inlinks', () => Reports.bulk('noResp')],
-        ['Response Codes › Blocked by Robots.txt Inlinks', () => Reports.bulk('blocked')],
-        '-',
-        ['Images › Missing Alt Text Inlinks', () => Reports.bulk('imgMissingAlt')],
-        ['Security › Mixed Content', () => Reports.bulk('mixed')],
-        ['Links › Internal Nofollow', () => Reports.bulk('nofollowInt')],
-        ['Canonicals', () => Reports.bulk('canonicals')],
-        ['Hreflang', () => Reports.bulk('hreflang')],
-        ['Structured Data (JSON-LD)', () => Reports.exportStructured()],
-      ]],
-      ['Reports', [
-        ['Crawl Overview', () => Reports.crawlOverview()],
-        ['Redirect Chains', () => Reports.redirectChains()],
-        ['Canonical Chains', () => Reports.canonicalChains()],
-        ['SERP Summary', () => Reports.serpSummary()],
-        ['Orphan Pages', () => Reports.orphans()],
-        ['Response Times', () => Reports.responseTimes()],
-        ['robots.txt', () => Reports.robotsView()],
-      ]],
-      ['Sitemaps', [
-        ['XML Sitemap', () => Reports.sitemapDialog(false)],
-        ['Images Sitemap', () => Reports.sitemapDialog(true)],
-      ]],
-      ['Visualisations', [
-        ['Árbol web — Crawl Tree Graph', () => WebTree.open('crawl')],
-        ['Árbol web — Directory Tree Graph', () => WebTree.open('dir')],
-        '-',
-        ['Force-Directed Crawl Diagram', () => Viz.open('crawl')],
-        ['Force-Directed Directory Tree Diagram', () => Viz.open('dir')],
-      ]],
-      ['Crawl Analysis', [
-        ['Start', () => this.crawlAnalysis(false)],
-      ]],
-      ['Help', [
-        ['Acerca de OpenSpider', () => this.about()],
-      ]],
-    ];
-    const bar = U.$('#menubar');
+  /* ---------- Acciones (desplegables de la barra superior) ---------- */
+  buildActions() {
+    const c = this.crawler;
+    const bar = U.$('#actions');
     bar.innerHTML = '';
-    for (const [name, items] of menus) {
+    const button = (icon, label, title, onclick) => {
+      const b = U.el('button', { class: 'btn ghost', title, onclick }, U.icon(icon));
+      if (label) b.append(U.el('span', { class: 'lbl' }, label));
+      return b;
+    };
+    const menu = (icon, label, items) => {
       const dd = U.el('div', { class: 'dd' });
       for (const it of items) {
         if (it === '-') { dd.append(U.el('div', { class: 'sep' })); continue; }
+        if (it.h) { dd.append(U.el('div', { class: 'dd-h' }, it.h)); continue; }
         dd.append(U.el('div', { class: 'it', onclick: e => { e.stopPropagation(); U.$$('.menu.open').forEach(m => m.classList.remove('open')); it[1](); } }, it[0], it[2] ? U.el('kbd', {}, it[2]) : null));
       }
-      const m = U.el('div', { class: 'menu' }, U.el('span', {}, name), dd);
-      m.addEventListener('click', e => { e.stopPropagation(); const was = m.classList.contains('open'); U.$$('.menu.open').forEach(x => x.classList.remove('open')); if (!was) m.classList.add('open'); });
-      m.addEventListener('mouseenter', () => { if (U.$('.menu.open') && !m.classList.contains('open')) { U.$$('.menu.open').forEach(x => x.classList.remove('open')); m.classList.add('open'); } });
-      bar.append(m);
-    }
+      const btn = button(icon, label, label);
+      btn.append(U.icon('chevron'));
+      const m = U.el('div', { class: 'menu' }, btn, dd);
+      btn.addEventListener('click', e => { e.stopPropagation(); U.$('#ctxmenu').hidden = true; const was = m.classList.contains('open'); U.$$('.menu.open').forEach(x => x.classList.remove('open')); if (!was) m.classList.add('open'); });
+      return m;
+    };
+    bar.append(
+      button('sparkles', 'Analizar', 'Análisis de rastreo: Link Score, casi duplicados y hreflang', () => this.crawlAnalysis(false)),
+      menu('tree', 'Visualizar', [
+        { h: 'Árbol web' },
+        ['Árbol de rastreo', () => WebTree.open('crawl')],
+        ['Árbol de directorios', () => WebTree.open('dir')],
+        { h: 'Grafo de fuerzas' },
+        ['Grafo de rastreo', () => Viz.open('crawl')],
+        ['Grafo de directorios', () => Viz.open('dir')],
+      ]),
+      menu('report', 'Informes', [
+        ['Resumen del rastreo', () => Reports.crawlOverview()],
+        ['Cadenas de redirección', () => Reports.redirectChains()],
+        ['Cadenas de canonical', () => Reports.canonicalChains()],
+        ['Resumen SERP', () => Reports.serpSummary()],
+        ['Páginas huérfanas', () => Reports.orphans()],
+        ['Tiempos de respuesta', () => Reports.responseTimes()],
+        ['robots.txt', () => Reports.robotsView()],
+        { h: 'Generar' },
+        ['Sitemap XML', () => Reports.sitemapDialog(false)],
+        ['Sitemap de imágenes', () => Reports.sitemapDialog(true)],
+      ]),
+      menu('download', 'Exportar', [
+        ['Vista actual (CSV)', () => this.exportView()],
+        ['Todas las URLs internas (CSV)', () => this.exportAllInternal()],
+        ['Informe de incidencias (CSV)', () => this.exportIssues()],
+        { h: 'Enlaces e imágenes' },
+        ['Todos los inlinks', () => Reports.bulk('allInlinks')],
+        ['Todos los outlinks', () => Reports.bulk('allOutlinks')],
+        ['Todos los textos ancla', () => Reports.bulk('allAnchors')],
+        ['Todas las imágenes', () => Reports.bulk('allImages')],
+        { h: 'Inlinks hacia URLs con problemas' },
+        ['Redirecciones (3xx)', () => Reports.bulk('r3xx')],
+        ['Errores de cliente (4xx)', () => Reports.bulk('r4xx')],
+        ['Errores de servidor (5xx)', () => Reports.bulk('r5xx')],
+        ['Sin respuesta', () => Reports.bulk('noResp')],
+        ['Bloqueadas por robots.txt', () => Reports.bulk('blocked')],
+        ['Imágenes sin alt', () => Reports.bulk('imgMissingAlt')],
+        { h: 'Otros' },
+        ['Contenido mixto', () => Reports.bulk('mixed')],
+        ['Enlaces internos nofollow', () => Reports.bulk('nofollowInt')],
+        ['Canonicals', () => Reports.bulk('canonicals')],
+        ['Hreflang', () => Reports.bulk('hreflang')],
+        ['Datos estructurados (JSON-LD)', () => Reports.exportStructured()],
+      ]),
+      menu('folder', 'Archivo', [
+        ['Nuevo rastreo', () => U.$('#btnClear').click()],
+        ['Abrir rastreo…', () => U.$('#fileOpen').click(), '⌘O'],
+        ['Guardar rastreo', () => this.saveFile(), '⌘S'],
+      ]),
+      U.el('span', { class: 'sep-v' }),
+    );
+    const cfgBtn = U.el('button', { class: 'icon-btn', title: 'Configuración', onclick: () => openConfig(c, 0, () => this.onConfigSaved()) }, U.icon('settings'));
+    this.themeBtn = U.el('button', { class: 'icon-btn', onclick: () => this.toggleTheme() });
+    const helpBtn = U.el('button', { class: 'icon-btn', title: 'Acerca de OpenSpider', onclick: () => this.about() }, U.icon('help'));
+    bar.append(cfgBtn, this.themeBtn, helpBtn);
+    this.renderThemeIcon();
   },
 
   onConfigSaved() {
     if (this.tabIdx >= this.tabs.length) this.tabIdx = 0;
     this.crawler.touch();
-    this.renderTabs();
-    this.buildMenus();
     this.refresh(true);
   },
 
+  isDark() {
+    const t = document.documentElement.dataset.theme;
+    return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  },
   toggleTheme() {
     const root = document.documentElement;
-    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-    root.dataset.theme = dark ? 'light' : 'dark';
+    root.dataset.theme = this.isDark() ? 'light' : 'dark';
     try { localStorage.setItem('ospider.theme', root.dataset.theme); } catch {}
+    this.renderThemeIcon();
+  },
+  renderThemeIcon() {
+    const dark = this.isDark();
+    this.themeBtn.innerHTML = '';
+    this.themeBtn.append(U.icon(dark ? 'sun' : 'moon'));
+    this.themeBtn.title = dark ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro';
   },
 
   about() {
-    Modal.open('Acerca de OpenSpider SEO', U.el('div', { class: 'report', html: `
-      <p><b>OpenSpider SEO</b> — rastreador SEO web de código abierto.</p>
-      <p>Frontend HTML/JS (parseo con DOMParser) + proxy PHP/cURL (<code>api.php</code>) para evitar las restricciones CORS.</p>
-      <ul><li>Modos Spider y List</li><li>${TABS.length} pestañas con ${TABS.reduce((s, t) => s + t.filters.length, 0)} filtros</li><li>Incidencias priorizadas, informes, exportaciones masivas, sitemaps XML, visualizaciones</li><li>Búsqueda y extracción personalizadas (CSS, XPath, Regex)</li><li>robots.txt, sitemaps, redirecciones, canonicals, hreflang, paginación, datos estructurados</li><li>Link Score (PageRank interno) y casi duplicados (MinHash)</li></ul>
-      <p>Atajos: ⌘/Ctrl+S guardar · ⌘/Ctrl+O abrir · ↑/↓ navegar · doble clic abrir URL · clic derecho menú.</p>` }),
+    Modal.open('Acerca de OpenSpider', U.el('div', { class: 'report', html: `
+      <p><b>OpenSpider SEO</b> es un rastreador SEO web de código abierto que funciona en el navegador.</p>
+      <p>El HTML se analiza en el propio navegador (DOMParser) y las peticiones pasan por un pequeño proxy PHP/cURL (<code>api.php</code>) para evitar las restricciones CORS.</p>
+      <ul><li>Rastreo de una web completa o de una lista de URLs</li><li>${TABS.length} secciones con ${TABS.reduce((s, t) => s + t.filters.length, 0)} filtros</li><li>Incidencias priorizadas, informes, exportaciones y sitemaps XML</li><li>Búsqueda y extracción personalizadas (CSS, XPath, Regex)</li><li>robots.txt, sitemaps, redirecciones, canonicals, hreflang, paginación y datos estructurados</li><li>Link Score (PageRank interno) y casi duplicados (MinHash)</li></ul>
+      <p>Atajos: ⌘/Ctrl+S guardar · ⌘/Ctrl+O abrir · ↑/↓ navegar por la tabla · doble clic abre la URL · clic derecho para más opciones.</p>` }),
     [{ label: 'Cerrar', cls: 'primary', onclick: () => Modal.close() }]);
   },
 
-  /* ---------- Guardar / abrir ---------- */
+  /* ---------- Guardar / abrir / exportar ---------- */
   saveFile() {
     const c = this.crawler;
     if (!c.urls.length) return U.toast('No hay nada que guardar');
@@ -251,33 +282,61 @@ const App = {
     } catch (e) { U.toast('Error al abrir: ' + e.message); }
     U.$('#fileOpen').value = '';
   },
+  exportView() {
+    this.grid.exportCSV(`${this.tab.id}-${this.tab.filters[this.filterIdx].name.replace(/\W+/g, '_').toLowerCase()}-${Reports.stamp()}.csv`);
+  },
   exportAllInternal() {
     const c = this.crawler, a = Analysis.get(c), t = TABS[0];
     const cols = t.cols.map(col => ({ label: col.label, get: r => col.get(r, a, c) }));
     U.download(`internal_all-${Reports.stamp()}.csv`, U.toCSV(cols, c.urls.filter(r => r.internal && !r.hidden)), 'text/csv');
   },
+  exportIssues() {
+    const list = this.issueList(Analysis.get(this.crawler));
+    U.download(`issues-overview-${Reports.stamp()}.csv`, U.toCSV(['Issue Name', 'Issue Type', 'Issue Priority', 'URLs', '% of Total', 'Description', 'How To Fix'].map(k => ({ key: k, label: k })),
+      list.map(it => ({ 'Issue Name': it.g.t.name + ': ' + it.f.f.name, 'Issue Type': it.type, 'Issue Priority': it.prio, URLs: it.f.n, '% of Total': U.pct(it.f.n, it.g.total), Description: it.desc, 'How To Fix': it.fix }))), 'text/csv');
+  },
 
   crawlAnalysis(silent) {
     const c = this.crawler;
+    if (!silent && !c.urls.length) return U.toast('Rastrea una web antes de analizarla');
     c.analysedFull = true;
     c.touch();
     const t0 = performance.now();
     Analysis.get(c);
     this.refresh(true);
-    if (!silent) U.toast(`Análisis de rastreo completado en ${Math.round(performance.now() - t0)} ms`);
+    if (!silent) U.toast(`Análisis completado en ${Math.round(performance.now() - t0)} ms`);
   },
 
-  /* ---------- Pestañas y filtros ---------- */
-  renderTabs() {
+  /* ---------- Navegación lateral y filtros ---------- */
+  renderNav(counts) {
     const el = U.$('#tabs');
+    const scroll = el.scrollTop;
     el.innerHTML = '';
-    this.tabs.forEach((t, i) => el.append(U.el('div', { class: 'tab' + (i === this.tabIdx ? ' active' : ''), onclick: () => this.selectTab(i, 0) }, t.name)));
+    const tabs = this.tabs, placed = new Set();
+    const groups = NAV_GROUPS.map(([name, ids]) => [name, ids.map(id => tabs.findIndex(t => t.id === id)).filter(i => i >= 0)]);
+    groups.forEach(([, idx]) => idx.forEach(i => placed.add(i)));
+    tabs.forEach((t, i) => { if (!placed.has(i)) groups[groups.length - 1][1].push(i); });
+    const rank = { Issue: 0, Warning: 1, Opportunity: 2 };
+    for (const [name, idx] of groups) {
+      if (!idx.length) continue;
+      const g = U.el('div', { class: 'nav-group' }, U.el('div', { class: 'nav-h' }, name));
+      for (const i of idx) {
+        const d = counts[i];
+        // indicador con la incidencia más grave que tenga URLs en esta sección
+        let worst = null;
+        for (const f of d.filters) if (f.n && f.f.issue && (!worst || rank[f.f.issue.type] < rank[worst])) worst = f.f.issue.type;
+        g.append(U.el('div', { class: 'nav-it' + (i === this.tabIdx ? ' active' : ''), onclick: () => this.selectTab(i, 0) },
+          U.el('span', { class: 'lbl' }, d.t.name), worst ? U.el('span', { class: 'flag ' + worst, title: 'Contiene ' + worst }) : null, U.el('span', { class: 'n' }, d.total || '')));
+      }
+      el.append(g);
+    }
+    el.scrollTop = scroll;
   },
   selectTab(i, f = 0) {
     this.tabIdx = i; this.filterIdx = f;
-    U.$$('#tabs .tab').forEach((x, j) => x.classList.toggle('active', j === i));
-    U.$$('#tabs .tab')[i]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    document.body.classList.remove('nav-open');
     this.refresh(true);
+    U.$('#tabs .nav-it.active')?.scrollIntoView({ block: 'nearest' });
   },
   goToUrl(rec) {
     const ti = rec.internal ? 0 : 1;
@@ -304,102 +363,126 @@ const App = {
     const c = this.crawler, a = Analysis.get(c), tab = this.tab;
     if (this.filterIdx >= tab.filters.length) this.filterIdx = 0;
     const filter = tab.filters[this.filterIdx];
-    // selector de filtros con recuento
-    const sel = U.$('#filterSel');
-    const base = c.urls.filter(r => !r.hidden && r.state === 'done' && tab.rows(r));
-    sel.innerHTML = '';
-    tab.filters.forEach((f, i) => {
-      let n = 0;
-      for (const r of base) { try { if (f.test(r, a, c)) n++; } catch {} }
-      sel.append(U.el('option', { value: i }, `${f.name} (${n})`));
-    });
-    sel.value = this.filterIdx;
+    const counts = this.overviewCounts(a);
+    this.renderNav(counts);
+    // chips de filtro con recuento
+    const chips = U.$('#chips');
+    const chipScroll = chips.scrollLeft;
+    chips.innerHTML = '';
+    for (const { f, fi, n } of counts[this.tabIdx].filters) {
+      const chip = U.el('button', { class: 'chip' + (fi === this.filterIdx ? ' active' : '') + (n || fi === 0 ? '' : ' zero'), title: f.issue ? `${f.issue.type} · ${f.issue.desc}` : f.name, onclick: () => { this.filterIdx = fi; this.refresh(true); } },
+        f.issue && n ? U.el('span', { class: 'flag ' + f.issue.type }) : null, f.name, U.el('span', { class: 'n' }, n));
+      chips.append(chip);
+    }
+    chips.scrollLeft = chipScroll;
     const rows = this.filtered(tab, filter, a);
     this.grid.setColumns(tab.cols, tab.id);
     this.grid.setRows(rows, a);
-    U.$('#rowCount').textContent = `${rows.length} filas`;
+    U.$('#tabTitle').textContent = tab.name;
+    U.$('#rowCount').textContent = `${rows.length.toLocaleString('es')} ${rows.length === 1 ? 'URL' : 'URLs'}`;
     this.renderStatus();
-    if (this.rtab === 'overview' || this.rtab === 'issues' || force || !c.running) this.renderRight(a);
+    this.renderKpis(a);
+    if (this.rtab === 'issues' || force || !c.running) this.renderRight(a);
   },
 
   renderStatus() {
     const c = this.crawler;
     const total = c.urls.length, done = c.doneCount || c.urls.filter(r => r.state === 'done').length, rem = c.remaining;
     const pct = total ? Math.round(done / Math.max(1, done + rem) * 100) : 0;
-    U.$('#progressBar').style.width = pct + '%';
-    U.$('#progressText').textContent = (c.running && !c.paused ? 'Crawl ' : c.paused && rem ? 'Paused ' : '') + pct + '%';
+    const crawling = c.running && !c.paused;
+    U.$('#progressBar').style.width = (crawling || (c.paused && rem) ? pct : 0) + '%';
     const avg = c.startedAt ? done / Math.max(1, ((c.finishedAt || Date.now()) - c.startedAt) / 1000) : 0;
-    U.$('#sbRate').textContent = `Media: ${avg.toFixed(2)} URL/s · Actual: ${c.running ? c.rate.toFixed(2) : '0.00'} URL/s`;
-    U.$('#sbDone').textContent = `Completado ${done} de ${done + rem} (${pct}%) · Pendientes ${rem}`;
+    const state = crawling ? ['run', `Rastreando · ${pct}%`] : c.paused && rem ? ['pause', `En pausa · ${pct}%`] : total ? ['done', 'Rastreo completado'] : ['', 'Listo para rastrear'];
+    U.$('#ssDot').className = 'ss-dot ' + state[0];
+    U.$('#ssState').textContent = state[1];
+    U.$('#ssRate').textContent = `${(crawling ? c.rate : avg).toFixed(2)} URL/s ${crawling ? 'ahora' : 'de media'} · ${c.cfg.mode === 'list' ? 'modo lista' : 'modo web'}`;
+    U.$('#ssDone').textContent = `${done.toLocaleString('es')} de ${(done + rem).toLocaleString('es')} · ${rem.toLocaleString('es')} pendientes`;
+  },
+
+  renderKpis(a) {
+    const c = this.crawler, el = U.$('#kpis');
+    const vis = c.urls.filter(r => !r.hidden);
+    const internal = vis.filter(r => r.internal);
+    const pages = internal.filter(r => r.type === 'HTML' && r.state === 'done');
+    const idx = pages.filter(r => r.indexability === 'Indexable').length;
+    const nonIdx = internal.filter(r => r.indexability === 'Non-Indexable').length;
+    const times = internal.filter(r => r.responseTime != null && r.status);
+    const avgT = times.length ? times.reduce((s, r) => s + r.responseTime, 0) / times.length : 0;
+    const list = this.issueList(a);
+    const cnt = t => list.filter(x => x.type === t).length;
+    const fmt = n => n.toLocaleString('es');
+    const kpi = (k, v, sub, extra, onclick) => U.el('div', { class: 'kpi' + (onclick ? ' click' : ''), onclick },
+      U.el('div', { class: 'k' }, k), U.el('div', { class: 'v' }, v, sub ? U.el('small', {}, sub) : null, extra));
+    el.innerHTML = '';
+    el.append(
+      kpi('URLs encontradas', fmt(vis.length), `${fmt(internal.length)} internas`),
+      kpi('Páginas HTML', fmt(pages.length)),
+      kpi('Indexables', fmt(idx), pages.length ? U.pct(idx, pages.length).replace('.00', '') : ''),
+      kpi('No indexables', fmt(nonIdx)),
+      kpi('Tiempo de respuesta', times.length ? avgT.toFixed(2) : '–', times.length ? 's de media' : ''),
+      kpi('Incidencias', fmt(list.length), '', U.el('div', { class: 'pills' },
+        U.el('span', { class: 'tag Issue' }, cnt('Issue')), U.el('span', { class: 'tag Warning' }, cnt('Warning')), U.el('span', { class: 'tag Opportunity' }, cnt('Opportunity'))),
+        () => { this.rtab = 'issues'; this.renderRightTabs(); this.renderRight(a); }),
+    );
   },
 
   /* ---------- Panel derecho ---------- */
   renderRightTabs() {
     const el = U.$('#rtabs');
     el.innerHTML = '';
-    [['overview', 'Overview'], ['issues', 'Issues'], ['structure', 'Site Structure'], ['times', 'Response Times']].forEach(([k, n]) =>
+    [['issues', 'Incidencias'], ['structure', 'Estructura'], ['times', 'Tiempos']].forEach(([k, n]) =>
       el.append(U.el('div', { class: 'tab' + (k === this.rtab ? ' active' : ''), onclick: () => { this.rtab = k; this.renderRightTabs(); this.renderRight(Analysis.get(this.crawler)); } }, n)));
   },
 
   overviewCounts(a) {
     const c = this.crawler;
-    if (this._ovCache && this._ovCache.v === c.version) return this._ovCache.data;
+    const key = c.version + '|' + this.tabs.length;
+    if (this._ovCache && this._ovCache.k === key) return this._ovCache.data;
     const data = this.tabs.map((t, ti) => {
       const base = c.urls.filter(r => !r.hidden && r.state === 'done' && t.rows(r));
       return { t, ti, total: base.length, filters: t.filters.map((f, fi) => { let n = 0; for (const r of base) { try { if (f.test(r, a, c)) n++; } catch {} } return { f, fi, n }; }) };
     });
-    this._ovCache = { v: c.version, data };
+    this._ovCache = { k: key, data };
     return data;
+  },
+
+  issueList(a) {
+    const order = { Issue: 0, Warning: 1, Opportunity: 2 }, po = { High: 0, Medium: 1, Low: 2 };
+    const list = [];
+    for (const g of this.overviewCounts(a)) for (const f of g.filters) if (f.f.issue && f.n) list.push({ g, f, ...f.f.issue });
+    return list.sort((x, y) => order[x.type] - order[y.type] || po[x.prio] - po[y.prio] || y.f.n - x.f.n);
   },
 
   renderRight(a) {
     const el = U.$('#rcontent'), c = this.crawler;
     const scroll = el.scrollTop;
     el.innerHTML = '';
-    if (this.rtab === 'overview') {
-      const internal = c.urls.filter(r => r.internal && !r.hidden).length;
-      el.append(U.el('div', { class: 'ov-sum', html: `<b>Summary</b><br>Total URLs encontradas: ${c.urls.filter(r => !r.hidden).length} · Internas: ${internal} · Externas: ${c.urls.filter(r => !r.internal && !r.hidden).length}<br>Indexables: ${c.urls.filter(r => r.internal && r.type === 'HTML' && r.indexability === 'Indexable').length} · No indexables: ${c.urls.filter(r => r.internal && r.indexability === 'Non-Indexable').length}${c.analysedFull ? '' : '<br><i>Ejecuta Crawl Analysis para Link Score y casi duplicados.</i>'}` }));
-      for (const g of this.overviewCounts(a)) {
-        const open = this.overviewOpen.has(g.t.name);
-        const grp = U.el('div', { class: 'ov-group' + (open ? ' open' : '') });
-        const h = U.el('div', { class: 'ov-h', onclick: () => { if (open) this.overviewOpen.delete(g.t.name); else this.overviewOpen.add(g.t.name); this.renderRight(a); } },
-          U.el('span', { class: 'lbl' }, g.t.name), U.el('span', { class: 'n' }, 'URLs'), U.el('span', { class: 'p' }, '% Total'));
-        const items = U.el('div', { class: 'ov-items' });
-        for (const f of g.filters) {
-          const iss = f.f.issue;
-          const dot = iss ? U.el('span', { class: 'dot', style: `background:${iss.type === 'Issue' ? 'var(--bad)' : iss.type === 'Warning' ? 'var(--warn)' : 'var(--info)'}` }) : null;
-          items.append(U.el('div', { class: 'ov-row' + (f.n ? '' : ' zero') + (g.ti === this.tabIdx && f.fi === this.filterIdx ? ' active' : ''), onclick: () => this.selectTab(g.ti, f.fi) },
-            U.el('span', {}, dot, f.f.name), U.el('span', { class: 'n' }, f.n), U.el('span', { class: 'p' }, U.pct(f.n, g.total))));
-        }
-        grp.append(h, items);
-        el.append(grp);
-      }
-    } else if (this.rtab === 'issues') {
-      const order = { Issue: 0, Warning: 1, Opportunity: 2 }, po = { High: 0, Medium: 1, Low: 2 };
-      const list = [];
-      for (const g of this.overviewCounts(a)) for (const f of g.filters) if (f.f.issue && f.n) list.push({ g, f, ...f.f.issue });
-      list.sort((x, y) => order[x.type] - order[y.type] || po[x.prio] - po[y.prio] || y.f.n - x.f.n);
+    if (this.rtab === 'issues') {
+      const list = this.issueList(a);
       const cnt = t => list.filter(x => x.type === t).length;
-      el.append(U.el('div', { class: 'ov-sum', html: `<span class="tag Issue">Issues ${cnt('Issue')}</span> <span class="tag Warning">Warnings ${cnt('Warning')}</span> <span class="tag Opportunity">Opportunities ${cnt('Opportunity')}</span>` }));
-      el.append(U.el('div', { class: 'issues-head' }, U.el('span', {}, 'Issue Name'), U.el('span', {}, 'Type'), U.el('span', {}, 'Priority'), U.el('span', { class: 'r' }, 'URLs')));
-      if (!list.length) el.append(U.el('div', { class: 'placeholder' }, c.urls.length ? '¡Sin incidencias detectadas!' : 'Rastrea una web para ver incidencias'));
+      const prio = { High: 'Alta', Medium: 'Media', Low: 'Baja' };
+      el.append(U.el('div', { class: 'ov-sum' },
+        U.el('span', { class: 'tag Issue' }, `${cnt('Issue')} Issues`), U.el('span', { class: 'tag Warning' }, `${cnt('Warning')} Warnings`), U.el('span', { class: 'tag Opportunity' }, `${cnt('Opportunity')} Opportunities`)));
+      if (!list.length) el.append(U.el('div', { class: 'placeholder' }, c.urls.length ? 'No se han detectado incidencias' : 'Rastrea una web para ver sus incidencias'));
       for (const it of list) {
         const key = it.g.t.name + ': ' + it.f.f.name;
-        el.append(U.el('div', { class: 'issue-row', onclick: () => { this.issueOpen = this.issueOpen === key ? null : key; this.selectTab(it.g.ti, it.f.fi); } },
-          U.el('span', {}, key), U.el('span', {}, U.el('span', { class: 'tag ' + it.type }, it.type)), U.el('span', { class: 'prio-' + it.prio }, it.prio), U.el('span', { class: 'r' }, it.f.n)));
-        if (this.issueOpen === key) el.append(U.el('div', { class: 'issue-detail', html: `<b>Descripción:</b> ${U.esc(it.desc)}<br><b>Cómo solucionarlo:</b> ${U.esc(it.fix)}<br><b>% del total:</b> ${U.pct(it.f.n, it.g.total)}` }));
+        const open = this.issueOpen === key;
+        el.append(U.el('div', { class: 'issue-row' + (open ? ' open' : ''), onclick: () => { this.issueOpen = open ? null : key; this.selectTab(it.g.ti, it.f.fi); } },
+          U.el('span', { class: 'name' }, it.f.f.name, U.el('small', {}, it.g.t.name)),
+          U.el('span', { class: 'r' }, it.f.n.toLocaleString('es')),
+          U.el('span', { class: 'meta' }, U.el('span', { class: 'tag ' + it.type }, it.type), U.el('span', { class: 'prio-' + it.prio }, 'Prioridad ' + prio[it.prio].toLowerCase()))));
+        if (open) el.append(U.el('div', { class: 'issue-detail', html: `<b>Qué pasa:</b> ${U.esc(it.desc)}<br><b>Cómo solucionarlo:</b> ${U.esc(it.fix)}<br><b>Afecta al</b> ${U.pct(it.f.n, it.g.total)} de las URLs de la sección` }));
       }
-      el.append(U.el('div', { style: 'padding:8px' }, U.el('button', { class: 'btn small', onclick: () => {
-        U.download(`issues-overview-${Reports.stamp()}.csv`, U.toCSV(['Issue Name', 'Issue Type', 'Issue Priority', 'URLs', '% of Total', 'Description', 'How To Fix'].map(k => ({ key: k, label: k })),
-          list.map(it => ({ 'Issue Name': it.g.t.name + ': ' + it.f.f.name, 'Issue Type': it.type, 'Issue Priority': it.prio, URLs: it.f.n, '% of Total': U.pct(it.f.n, it.g.total), Description: it.desc, 'How To Fix': it.fix }))), 'text/csv');
-      } }, '⇩ Exportar informe de incidencias')));
+      if (list.length) el.append(U.el('div', { class: 'panel-foot' }, U.el('button', { class: 'btn small', onclick: () => this.exportIssues() }, U.icon('download'), 'Exportar incidencias (CSV)')));
+      if (c.urls.length && !c.analysedFull) el.append(U.el('div', { class: 'placeholder' }, 'Pulsa «Analizar» para calcular Link Score, casi duplicados y hreflang.'));
     } else if (this.rtab === 'structure') {
       const pages = c.urls.filter(r => r.internal && r.type === 'HTML' && r.state === 'done' && !r.hidden);
+      if (!pages.length) { el.append(U.el('div', { class: 'placeholder' }, 'Sin páginas rastreadas')); el.scrollTop = scroll; return; }
       const depth = new Map();
       for (const r of pages) depth.set(r.depth, (depth.get(r.depth) || 0) + 1);
       const maxD = Math.max(1, ...depth.values());
-      const ch = U.el('div', { class: 'chart' }, U.el('h4', {}, 'Crawl Depth'));
-      [...depth.keys()].sort((x, y) => x - y).forEach(d => ch.append(U.el('div', { class: 'bar' }, U.el('span', {}, d === 0 ? 'Start' : d + (d === 1 ? ' clic' : ' clics')), U.el('div', { class: 'b', style: `width:${depth.get(d) / maxD * 100}%` }), U.el('span', { class: 'n' }, depth.get(d)))));
+      const ch = U.el('div', { class: 'chart' }, U.el('h4', {}, 'Profundidad de rastreo'));
+      [...depth.keys()].sort((x, y) => x - y).forEach(d => ch.append(U.el('div', { class: 'bar' }, U.el('span', {}, d === 0 ? 'Inicio' : d + (d === 1 ? ' clic' : ' clics')), U.el('div', { class: 'b', style: `width:${depth.get(d) / maxD * 100}%` }), U.el('span', { class: 'n' }, depth.get(d)))));
       el.append(ch);
       // árbol de directorios
       const root = { n: 0, ch: new Map(), idx: 0 };
@@ -423,25 +506,26 @@ const App = {
       el.append(tree);
     } else if (this.rtab === 'times') {
       const rs = c.urls.filter(r => r.internal && r.responseTime != null && r.status);
+      if (!rs.length) { el.append(U.el('div', { class: 'placeholder' }, 'Sin datos de tiempos todavía')); el.scrollTop = scroll; return; }
       const buckets = [[0, 1, '0 - 1 s'], [1, 2, '1 - 2 s'], [2, 3, '2 - 3 s'], [3, 4, '3 - 4 s'], [4, 5, '4 - 5 s'], [5, 6, '5 - 6 s'], [6, 7, '6 - 7 s'], [7, 8, '7 - 8 s'], [8, 9, '8 - 9 s'], [9, 10, '9 - 10 s'], [10, 1e9, '10+ s']];
       const counts = buckets.map(([lo, hi]) => rs.filter(r => r.responseTime >= lo && r.responseTime < hi).length);
       const max = Math.max(1, ...counts);
       const ch = U.el('div', { class: 'chart' }, U.el('h4', {}, `Tiempos de respuesta (${rs.length} URLs internas)`));
       buckets.forEach((b, i) => ch.append(U.el('div', { class: 'bar' }, U.el('span', {}, b[2]), U.el('div', { class: 'b', style: `width:${counts[i] / max * 100}%` }), U.el('span', { class: 'n' }, `${counts[i]} · ${U.pct(counts[i], rs.length)}`))));
-      const avg = rs.length ? rs.reduce((s, r) => s + r.responseTime, 0) / rs.length : 0;
+      const avg = rs.reduce((s, r) => s + r.responseTime, 0) / rs.length;
       ch.append(U.el('p', {}, `Media: ${avg.toFixed(3)} s`));
       const codes = new Map();
-      for (const r of c.urls.filter(x => x.status != null)) { const k = r.status ? Math.floor(r.status / 100) + 'xx' : 'Sin respuesta / bloqueada'; codes.set(k, (codes.get(k) || 0) + 1); }
+      for (const r of c.urls.filter(x => x.status != null)) { const k = r.status ? Math.floor(r.status / 100) + 'xx' : 'Sin respuesta'; codes.set(k, (codes.get(k) || 0) + 1); }
       const cmax = Math.max(1, ...codes.values());
-      ch.append(U.el('h4', {}, 'Códigos de respuesta'));
-      [...codes.entries()].sort().forEach(([k, v]) => ch.append(U.el('div', { class: 'bar' }, U.el('span', {}, k), U.el('div', { class: 'b', style: `width:${v / cmax * 100}%;background:${k[0] === '2' ? 'var(--accent)' : k[0] === '3' ? 'var(--info)' : 'var(--bad)'}` }), U.el('span', { class: 'n' }, v))));
+      ch.append(U.el('h4', { style: 'margin-top:18px' }, 'Códigos de respuesta'));
+      [...codes.entries()].sort().forEach(([k, v]) => ch.append(U.el('div', { class: 'bar' }, U.el('span', {}, k), U.el('div', { class: 'b', style: `width:${v / cmax * 100}%;background:${k[0] === '2' ? 'var(--good)' : k[0] === '3' ? 'var(--info)' : 'var(--bad)'}` }), U.el('span', { class: 'n' }, v))));
       el.append(ch);
     }
     el.scrollTop = scroll;
   },
 
   /* ---------- Panel inferior ---------- */
-  BTABS: [['details', 'URL Details'], ['inlinks', 'Inlinks'], ['outlinks', 'Outlinks'], ['images', 'Image Details'], ['resources', 'Resources'], ['serp', 'SERP Snippet'], ['rendered', 'Rendered Page'], ['source', 'View Source'], ['headers', 'HTTP Headers'], ['cookies', 'Cookies'], ['dupes', 'Duplicate Details'], ['structured', 'Structured Data Details']],
+  BTABS: [['details', 'Detalles'], ['inlinks', 'Inlinks'], ['outlinks', 'Outlinks'], ['images', 'Imágenes'], ['resources', 'Recursos'], ['serp', 'Snippet SERP'], ['rendered', 'Vista previa'], ['source', 'Código fuente'], ['headers', 'Cabeceras HTTP'], ['cookies', 'Cookies'], ['dupes', 'Duplicados'], ['structured', 'Datos estructurados']],
   renderBottomTabs() {
     const el = U.$('#btabs');
     el.innerHTML = '';
@@ -528,13 +612,13 @@ const App = {
         const exact = r.contentHash ? c.urls.filter(x => x !== r && x.contentHash === r.contentHash && x.status === 200) : [];
         for (const x of exact) pairs.push(['Exact duplicate (100%)', x.url]);
         for (const d of (a.nearDup.get(r.id) || []).sort((x, y) => y.sim - x.sim)) pairs.push([`Near duplicate (${Math.round(d.sim * 100)}%)`, c.urls[d.id].url]);
-        if (!pairs.length) el.append(U.el('div', { class: 'placeholder' }, c.analysedFull ? 'Sin duplicados' : 'Ejecuta Crawl Analysis para calcular casi duplicados'));
+        if (!pairs.length) el.append(U.el('div', { class: 'placeholder' }, c.analysedFull ? 'Sin duplicados' : 'Pulsa «Analizar» para calcular casi duplicados'));
         else el.append(kv(pairs));
         break;
       }
       case 'structured': {
         if (!r.structured?.raw.length) { el.append(U.el('div', { class: 'placeholder' }, 'Sin JSON-LD')); break; }
-        el.append(U.el('div', { style: 'padding:6px 8px' }, U.el('a', { href: 'https://validator.schema.org/#url=' + encodeURIComponent(r.url), target: '_blank', rel: 'noopener' }, 'Validar en validator.schema.org ↗'), ' · ',
+        el.append(U.el('div', { class: 'links-bar' }, U.el('a', { href: 'https://validator.schema.org/#url=' + encodeURIComponent(r.url), target: '_blank', rel: 'noopener' }, 'Validar en validator.schema.org ↗'),
           U.el('a', { href: 'https://search.google.com/test/rich-results?url=' + encodeURIComponent(r.url), target: '_blank', rel: 'noopener' }, 'Rich Results Test ↗')));
         el.append(U.el('pre', { class: 'src' }, JSON.stringify(r.structured.raw, null, 2)));
         if (r.structured.microdata.length) el.append(kv([['Microdata', r.structured.microdata.join(', ')]]));

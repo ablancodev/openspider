@@ -3,7 +3,7 @@ class Grid {
   constructor(root, opts = {}) {
     this.root = root;
     this.opts = opts;
-    this.rowH = 22;
+    this.rowH = 30;
     this.columns = [];
     this.rows = [];
     this.view = [];
@@ -116,15 +116,17 @@ class Grid {
     const cx = this.ctx, cr = this.opts.crawler, statusColor = this.opts.statusColor;
     for (let i = first; i < last; i++) {
       const r = this.view[i];
-      let cls = 'g-row' + (i === this.selected ? ' sel' : '') + (i % 2 ? ' odd' : '');
+      const cls = 'g-row' + (i === this.selected ? ' sel' : '');
       html += `<div class="${cls}" data-i="${i}" style="top:${i * this.rowH}px;width:${total}px"><div class="g-cell g-num">${i + 1}</div>`;
       for (const c of this.columns) {
         let v = c.get(r, cx, cr);
         if (v == null) v = '';
-        let extra = '';
-        if (c.label === 'Status Code' && statusColor) extra = ' ' + statusColor(v);
-        if (c.label === 'Indexability') extra = v === 'Non-Indexable' ? ' bad' : v === 'Indexable' ? ' good' : '';
-        html += `<div class="g-cell${c.num ? ' r' : ''}${extra}" style="width:${c.w}px" title="${U.esc(v)}">${U.esc(v)}</div>`;
+        // códigos de estado e indexabilidad como etiquetas de color
+        let pill = '';
+        if (v !== '' && c.label === 'Status Code' && statusColor) pill = statusColor(v);
+        if (c.label === 'Indexability') pill = v === 'Non-Indexable' ? 'bad' : v === 'Indexable' ? 'good' : '';
+        const txt = U.esc(v);
+        html += `<div class="g-cell${c.num ? ' r' : ''}" style="width:${c.w}px" title="${txt}">${pill ? `<span class="pill ${pill}">${txt}</span>` : txt}</div>`;
       }
       html += '</div>';
     }

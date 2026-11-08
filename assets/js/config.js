@@ -26,7 +26,7 @@ const Modal = {
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !U.$('#modalBg').hidden) Modal.close(); });
 
 const CONFIG_SECTIONS = [
-  { name: 'Spider · Crawl', fields: [
+  { name: 'Rastreo', fields: [
     { h: 'Recursos' },
     { k: 'crawlImages', label: 'Comprobar imágenes', t: 'bool' },
     { k: 'crawlCSS', label: 'Comprobar CSS', t: 'bool' },
@@ -47,14 +47,14 @@ const CONFIG_SECTIONS = [
     { k: 'autoAnalysis', label: 'Análisis de rastreo automático al terminar (Link Score, casi duplicados)', t: 'bool' },
     { k: 'nearDupThreshold', label: 'Umbral casi duplicados (%)', t: 'num' },
   ] },
-  { name: 'Spider · Limits', fields: [
+  { name: 'Límites', fields: [
     { k: 'maxUrls', label: 'Límite total de URLs', t: 'num' },
     { k: 'maxDepth', label: 'Profundidad máxima de rastreo (-1 = sin límite)', t: 'num' },
     { k: 'maxFolderDepth', label: 'Profundidad máxima de carpetas (-1)', t: 'num' },
     { k: 'maxQueryStrings', label: 'Máx. parámetros de query (-1)', t: 'num' },
     { k: 'timeout', label: 'Timeout de respuesta (segundos)', t: 'num' },
   ] },
-  { name: 'Spider · Preferences', fields: [
+  { name: 'Umbrales SEO', fields: [
     { h: 'Page Title' },
     { k: 'titleMaxChars', label: 'Longitud máxima (caracteres)', t: 'num' },
     { k: 'titleMinChars', label: 'Longitud mínima (caracteres)', t: 'num' },
@@ -83,20 +83,20 @@ const CONFIG_SECTIONS = [
     { k: 'robotsName', label: 'Nombre de meta robots específica', t: 'text' },
     { hint: 'Se usa la semántica de Google: la regla más larga gana, admite * y $. El user-agent configurado decide el grupo aplicable.' },
   ] },
-  { name: 'Include', fields: [
+  { name: 'Incluir URLs', fields: [
     { hint: 'Solo se rastrearán las URLs que coincidan con alguna de estas expresiones regulares (una por línea). Ej.: <code>https://www.ejemplo.com/blog/.*</code>' },
     { k: 'include', t: 'textarea' },
   ] },
-  { name: 'Exclude', fields: [
+  { name: 'Excluir URLs', fields: [
     { hint: 'Las URLs que coincidan no se rastrearán ni se guardarán (una regex por línea). Ej.: <code>.*\\?.*</code>, <code>.*/wp-admin/.*</code>' },
     { k: 'exclude', t: 'textarea' },
   ] },
-  { name: 'URL Rewriting', fields: [
+  { name: 'Reescritura de URLs', fields: [
     { k: 'ignoreParams', label: 'Eliminar todos los parámetros', t: 'bool' },
     { k: 'removeParams', label: 'Eliminar parámetros (separados por coma)', t: 'text' },
     { k: 'lowercase', label: 'Convertir URLs a minúsculas', t: 'bool' },
   ] },
-  { name: 'Speed', fields: [
+  { name: 'Velocidad', fields: [
     { k: 'threads', label: 'Hilos concurrentes', t: 'num' },
     { k: 'delay', label: 'Retardo entre peticiones por hilo (ms)', t: 'num' },
     { hint: 'Cada hilo hace una petición al proxy PHP local. Valores altos pueden saturar el servidor rastreado.' },
@@ -105,16 +105,16 @@ const CONFIG_SECTIONS = [
     { k: 'uaPreset', label: 'Preset', t: 'select', options: Object.keys(UA_PRESETS), onchange: (cfg, v, form) => { cfg.userAgent = UA_PRESETS[v]; form.querySelector('[data-k=userAgent]').value = cfg.userAgent; } },
     { k: 'userAgent', label: 'User-Agent', t: 'text' },
   ] },
-  { name: 'HTTP Header', fields: [
+  { name: 'Cabeceras HTTP', fields: [
     { hint: 'Cabeceras adicionales, una por línea (p. ej. <code>Cookie: sesion=123</code> o <code>Accept-Language: en</code>).' },
     { k: 'extraHeaders', t: 'textarea' },
   ] },
-  { name: 'Authentication', fields: [
+  { name: 'Autenticación', fields: [
     { hint: 'Autenticación HTTP Basic/Digest para entornos de staging.' },
     { k: 'authUser', label: 'Usuario', t: 'text' },
     { k: 'authPass', label: 'Contraseña', t: 'password' },
   ] },
-  { name: 'XML Sitemaps', fields: [
+  { name: 'Sitemaps XML', fields: [
     { k: 'autoDiscoverSitemaps', label: 'Detectar sitemaps en robots.txt (o /sitemap.xml)', t: 'bool' },
     { k: 'crawlSitemaps', label: 'Rastrear las URLs de los sitemaps', t: 'bool' },
     { k: 'sitemapUrls', label: 'Sitemaps adicionales (una URL por línea)', t: 'textarea' },
@@ -217,7 +217,7 @@ function openConfig(crawler, startSection = 0, onSave) {
   Modal.open('Configuración', wrap, [
     { label: 'Restaurar valores por defecto', onclick: () => { Object.assign(cfg, structuredClone(DEFAULT_CONFIG), { mode: cfg.mode }); render(); } },
     { label: 'Cancelar', onclick: () => Modal.close() },
-    { label: 'OK', cls: 'primary', onclick: () => {
+    { label: 'Guardar', cls: 'primary', onclick: () => {
       cfg.customSearch = cfg.customSearch.filter(s => s.name && s.value);
       cfg.customExtract = cfg.customExtract.filter(s => s.name && s.expr);
       cfg.threads = Math.max(1, Math.min(50, cfg.threads | 0));

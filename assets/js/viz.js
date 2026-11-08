@@ -111,7 +111,7 @@ const Viz = {
       ctx.stroke();
       for (const n of nodes) {
         ctx.fillStyle = n.color; ctx.beginPath(); ctx.arc(n.x, n.y, n.size, 0, 6.283); ctx.fill();
-        if (n === hover) { ctx.strokeStyle = '#000'; ctx.lineWidth = 2 / view.k; ctx.stroke(); }
+        if (n === hover) { ctx.strokeStyle = getComputedStyle(document.body).color; ctx.lineWidth = 2 / view.k; ctx.stroke(); }
       }
       if (view.k > 2.2) {
         ctx.fillStyle = getComputedStyle(document.body).color; ctx.font = `${10 / view.k * 1.5}px sans-serif`;

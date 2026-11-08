@@ -3,55 +3,76 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>OpenSpider SEO</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2367b346'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold'%3ES%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236366f1'/%3E%3Cstop offset='1' stop-color='%238b5cf6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cg stroke='%23fff' stroke-width='1.8' fill='none' stroke-linecap='round'%3E%3Ccircle cx='16' cy='16' r='3'/%3E%3Ccircle cx='16' cy='16' r='7.5' opacity='.75'/%3E%3Cpath d='M16 5v22M5 16h22M8.2 8.2l15.6 15.6M23.8 8.2 8.2 23.8' opacity='.5'/%3E%3C/g%3E%3C/svg%3E">
+<script>try { const t = localStorage.getItem('ospider.theme'); if (t) document.documentElement.dataset.theme = t; } catch {}</script>
 <link rel="stylesheet" href="assets/css/app.css">
 </head>
 <body>
-<nav class="menubar" id="menubar"></nav>
+<header class="topbar">
+  <button class="icon-btn only-narrow" id="btnNav" title="Secciones"></button>
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="bm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#8b5cf6"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#bm)"/><g stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"><circle cx="16" cy="16" r="3"/><circle cx="16" cy="16" r="7.5" opacity=".75"/><path d="M16 5v22M5 16h22M8.2 8.2l15.6 15.6M23.8 8.2 8.2 23.8" opacity=".5"/></g></svg>
+    <span class="brand-text">OpenSpider<a class="brand-by" href="https://ablancodev.com/" target="_blank" rel="noopener">by ablancodev</a></span>
+  </div>
 
-<div class="toolbar">
-  <div class="logo"><span class="logo-dot">S</span> OpenSpider <small>SEO</small></div>
-  <span class="mode-badge" id="modeBadge">Spider</span>
-  <input id="startUrl" type="text" placeholder="Introduce la URL a rastrear (p. ej. https://www.ejemplo.com/)" autocomplete="off" spellcheck="false">
-  <button id="btnList" class="btn" hidden>Subir lista ▾</button>
-  <button id="btnStart" class="btn primary">Start</button>
-  <button id="btnPause" class="btn" disabled>Pause</button>
-  <button id="btnClear" class="btn">Clear</button>
-  <button id="btnTree" class="btn" title="Árbol web">🌳 Árbol web</button>
-  <div class="progress"><div class="progress-bar" id="progressBar"></div><span id="progressText">0%</span></div>
-</div>
+  <div class="command">
+    <div class="segmented" id="modeSeg">
+      <button data-mode="spider" title="Rastrear una web siguiendo enlaces">Web</button>
+      <button data-mode="list" title="Rastrear una lista de URLs">Lista</button>
+    </div>
+    <input id="startUrl" type="text" placeholder="https://www.ejemplo.com/" autocomplete="off" spellcheck="false">
+    <button id="btnList" class="btn ghost" hidden>Editar lista</button>
+    <button id="btnStart" class="btn primary">Rastrear</button>
+    <button id="btnPause" class="btn" disabled>Pausar</button>
+    <button id="btnClear" class="icon-btn" title="Nuevo rastreo (borrar datos)"></button>
+  </div>
 
-<main class="main">
-  <section class="left" id="left">
-    <div class="tabs" id="tabs"></div>
-    <div class="filterbar">
-      <select id="filterSel" title="Filtro"></select>
-      <button class="btn small" id="btnExport">⇩ Export</button>
-      <span class="spacer"></span>
-      <span class="count" id="rowCount"></span>
-      <input id="search" type="search" placeholder="Buscar (regex)…" spellcheck="false">
+  <nav class="actions" id="actions"></nav>
+  <div class="progress" id="progress"><div class="progress-bar" id="progressBar"></div></div>
+</header>
+
+<div class="shell">
+  <aside class="sidebar" id="sidebar">
+    <nav class="nav" id="tabs"></nav>
+    <div class="side-status">
+      <div class="ss-line"><span class="ss-dot" id="ssDot"></span><span id="ssState">Listo</span></div>
+      <div class="ss-sub" id="ssRate">0 URL/s</div>
+      <div class="ss-sub" id="ssDone">0 de 0 · 0 pendientes</div>
     </div>
-    <div class="gridwrap" id="grid"></div>
-    <div class="splitter h" id="splitH"></div>
-    <div class="bottom" id="bottom">
-      <div class="btabs" id="btabs"></div>
-      <div class="bcontent" id="bcontent"><div class="placeholder">Selecciona una URL para ver los detalles</div></div>
-    </div>
-  </section>
-  <div class="splitter v" id="splitV"></div>
-  <aside class="right" id="right">
-    <div class="rtabs" id="rtabs"></div>
-    <div class="rcontent" id="rcontent"></div>
   </aside>
-</main>
+  <div class="scrim" id="scrim"></div>
 
-<footer class="statusbar">
-  <span id="sbMode">Modo: Spider</span>
-  <span id="sbRate">Media: 0 URL/s · Actual: 0 URL/s</span>
-  <span class="spacer"></span>
-  <span id="sbDone">Completado 0 de 0 (0%) · Pendientes 0</span>
-</footer>
+  <main class="main">
+    <section class="kpis" id="kpis"></section>
+    <div class="work">
+      <section class="left" id="left">
+        <div class="card grid-card">
+          <div class="card-head">
+            <div class="card-title"><h1 id="tabTitle">Internal</h1><span class="count" id="rowCount"></span></div>
+            <div class="card-tools">
+              <label class="search"><span id="searchIcon"></span><input id="search" type="search" placeholder="Filtrar URLs (regex)…" spellcheck="false"></label>
+              <button class="btn" id="btnExport" title="Exportar la vista actual a CSV">CSV</button>
+            </div>
+          </div>
+          <div class="chips" id="chips"></div>
+          <div class="gridwrap" id="grid"></div>
+        </div>
+        <div class="splitter h" id="splitH"></div>
+        <div class="card bottom" id="bottom">
+          <div class="utabs" id="btabs"></div>
+          <div class="bcontent" id="bcontent"><div class="placeholder">Selecciona una URL para ver los detalles</div></div>
+        </div>
+      </section>
+      <div class="splitter v" id="splitV"></div>
+      <aside class="card right" id="right">
+        <div class="utabs" id="rtabs"></div>
+        <div class="rcontent" id="rcontent"></div>
+      </aside>
+    </div>
+  </main>
+</div>
 
 <div class="modal-bg" id="modalBg" hidden><div class="modal" id="modal"></div></div>
 <div class="ctxmenu" id="ctxmenu" hidden></div>
